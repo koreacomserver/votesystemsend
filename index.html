@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>학교 선거 개표 관리자</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Pretendard', 'Segoe UI', sans-serif; }
+    body { margin: 0; background: #0e1117; color: #f0f0f0; }
+    header {
+      background: #1a2238; padding: 1.2rem 2rem;
+      font-size: 1.6rem; font-weight: bold;
+      border-bottom: 2px solid #304b99;
+      text-align: center;
+    }
+    main { max-width: 900px; margin: 2rem auto; padding: 2rem; background: #161b26; border-radius: 12px; box-shadow: 0 0 15px rgba(0,0,0,0.3); }
+    h2 { border-left: 5px solid #3a6ff8; padding-left: 10px; margin-top: 2rem; }
+    .candidate-list { display: grid; gap: 1rem; margin-top: 1rem; }
+    .candidate-item {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #20283a; padding: 1rem; border-radius: 8px;
+    }
+    .info { display: flex; align-items: center; gap: 1rem; }
+    input[type="text"], input[type="number"] {
+      background: #121826; color: white; border: 1px solid #3a6ff8;
+      border-radius: 6px; padding: 6px 10px; width: 120px;
+    }
+    button {
+      background: #3a6ff8; border: none; color: white;
+      padding: 8px 16px; border-radius: 8px; cursor: pointer;
+      transition: 0.2s;
+    }
+    button:hover { background: #5888ff; }
+    .delete-btn { background: #c0392b; }
+    .status { margin-top: 1.5rem; text-align: center; color: #88ffb6; }
+    .add-form { display: flex; gap: 0.5rem; margin-top: 1rem; }
+    .bar { height: 8px; border-radius: 4px; background: #3a6ff8; margin-top: 5px; transition: width 0.3s ease; }
+    .percent { color: #7fd4ff; font-size: 0.9rem; margin-left: 6px; }
+  </style>
+</head>
+<body>
+  <header>🏫 학교 선거 개표 관리자</header>
+  <main>
+    <section id="positions"></section>
+    <div class="status" id="status">Firestore 연결 중...</div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+    import {
+      getFirestore, collection, doc, getDocs,
+      addDoc, deleteDoc, setDoc, onSnapshot
+    } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCLge3LmR3bCTb7gKnVMVh2s_xt7zpdQYg",
+      authDomain: "votesystemserver.firebaseapp.com",
+      projectId: "votesystemserver",
+      storageBucket: "votesystemserver.firebasestorage.app",
+      messagingSenderId: "1091638887745",
+      appId: "1:1091638887745:web:7a6f54b6900c04839fcdc0"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const positions = [
+      { key: "president", label: "회장" },
+      { key: "vp_3rd", label: "3학년 부회장" },
+      { key: "vp_2nd", label: "2학년 부회장" }
+    ];
+
+    const container = document.getElementById("positions");
+
+    // 메인 렌더링
+    positions.forEach(pos => {
+      const section = document.createElement("section");
+      section.innerHTML = `
+        <h2>${pos.label}</h2>
+        <div id="${pos.key}" class="candidate-list"></div>
+        <div class="add-form">
+          <input type="text" id="name-${pos.key}" placeholder="후보 이름" />
+          <input type="number" id="votes-${pos.key}" placeholder="득표수" />
+          <button onclick="addCandidate('${pos.key}')">추가</button>
+        </div>
+      `;
+      container.appendChild(section);
+      onSnapshot(collection(db, `elections/2025/${pos.key}`), () => renderCandidates());
+    });
+
+    async function renderCandidates() {
+      for (const pos of positions) {
+        const colRef = collection(db, `elections/2025/${pos.key}`);
+        const snap = await getDocs(colRef);
+        const container = document.getElementById(pos.key);
+        container.innerHTML = '';
+
+        // 총합 계산
+        let totalVotes = 0;
+        const candidates = [];
+        snap.forEach(docSnap => {
+          const data = { id: docSnap.id, ...docSnap.data() };
+          candidates.push(data);
+          totalVotes += Number(data.votes || 0);
+        });
+
+        // 렌더링
+        candidates.forEach(c => {
+          const percent = totalVotes ? ((c.votes / totalVotes) * 100).toFixed(1) : 0;
+          const div = document.createElement('div');
+          div.className = 'candidate-item';
+          div.innerHTML = `
+            <div class="info">
+              <span>${c.name}</span>
+              <input type="number" id="votes-${pos.key}-${c.id}" value="${c.votes}" />
+              <span class="percent">${percent}%</span>
+            </div>
+            <div style="display:flex;gap:5px;">
+              <button onclick="updateVote('${pos.key}', '${c.id}')">저장</button>
+              <button class="delete-btn" onclick="deleteCandidate('${pos.key}', '${c.id}')">삭제</button>
+            </div>
+          `;
+          const bar = document.createElement('div');
+          bar.className = 'bar';
+          bar.style.width = `${percent}%`;
+          div.appendChild(bar);
+          container.appendChild(div);
+        });
+      }
+      document.getElementById("status").textContent = "✅ Firestore 연결됨 (실시간 반영 중)";
+    }
+
+    window.addCandidate = async function(position) {
+      const name = document.getElementById(`name-${position}`).value.trim();
+      const votes = Number(document.getElementById(`votes-${position}`).value) || 0;
+      if (!name) return alert("이름을 입력하세요!");
+      await addDoc(collection(db, `elections/2025/${position}`), { name, votes });
+      document.getElementById(`name-${position}`).value = '';
+      document.getElementById(`votes-${position}`).value = '';
+    };
+
+    window.updateVote = async function(position, id) {
+      const input = document.getElementById(`votes-${position}-${id}`);
+      const newVotes = Number(input.value);
+      await setDoc(doc(db, `elections/2025/${position}/${id}`), { votes: newVotes }, { merge: true });
+      document.getElementById('status').textContent = `💾 ${position} 후보 ${id}번 득표수 업데이트 완료!`;
+    };
+
+    window.deleteCandidate = async function(position, id) {
+      if (!confirm("정말 이 후보를 삭제할까요?")) return;
+      await deleteDoc(doc(db, `elections/2025/${position}/${id}`));
+      document.getElementById('status').textContent = `🗑️ ${position} 후보 삭제 완료!`;
+    };
+
+    renderCandidates();
+  </script>
+</body>
+</html>
