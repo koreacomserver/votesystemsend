@@ -36,12 +36,22 @@
     .add-form { display: flex; gap: 0.5rem; margin-top: 1rem; }
     .bar { height: 8px; border-radius: 4px; background: #3a6ff8; margin-top: 5px; transition: width 0.3s ease; }
     .percent { color: #7fd4ff; font-size: 0.9rem; margin-left: 6px; }
+    .turnout-box { margin-top: 2rem; padding: 1rem; background: #20283a; border-radius: 8px; }
   </style>
 </head>
 <body>
   <header>🏫 학교 선거 개표 관리자</header>
   <main>
     <section id="positions"></section>
+
+    <div class="turnout-box">
+      <h2>전체 투표율 설정</h2>
+      <label>전체 유권자 수: </label>
+      <input type="number" id="totalVoters" placeholder="예: 450" />
+      <button onclick="updateTotalVoters()">저장</button>
+      <div id="turnoutStatus"></div>
+    </div>
+
     <div class="status" id="status">Firestore 연결 중...</div>
   </main>
 
@@ -49,7 +59,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
     import {
       getFirestore, collection, doc, getDocs,
-      addDoc, deleteDoc, setDoc, onSnapshot
+      addDoc, deleteDoc, setDoc, onSnapshot, getDoc
     } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -71,7 +81,6 @@
 
     const container = document.getElementById("positions");
 
-    // 메인 렌더링
     positions.forEach(pos => {
       const section = document.createElement("section");
       section.innerHTML = `
@@ -84,7 +93,7 @@
         </div>
       `;
       container.appendChild(section);
-      onSnapshot(collection(db, `elections/2025/${pos.key}`), () => renderCandidates());
+      onSnapshot(collection(db, `elections/2025/${pos.key}`), renderCandidates);
     });
 
     async function renderCandidates() {
@@ -94,7 +103,6 @@
         const container = document.getElementById(pos.key);
         container.innerHTML = '';
 
-        // 총합 계산
         let totalVotes = 0;
         const candidates = [];
         snap.forEach(docSnap => {
@@ -103,7 +111,6 @@
           totalVotes += Number(data.votes || 0);
         });
 
-        // 렌더링
         candidates.forEach(c => {
           const percent = totalVotes ? ((c.votes / totalVotes) * 100).toFixed(1) : 0;
           const div = document.createElement('div');
@@ -119,10 +126,6 @@
               <button class="delete-btn" onclick="deleteCandidate('${pos.key}', '${c.id}')">삭제</button>
             </div>
           `;
-          const bar = document.createElement('div');
-          bar.className = 'bar';
-          bar.style.width = `${percent}%`;
-          div.appendChild(bar);
           container.appendChild(div);
         });
       }
@@ -151,6 +154,21 @@
       document.getElementById('status').textContent = `🗑️ ${position} 후보 삭제 완료!`;
     };
 
+    window.updateTotalVoters = async function() {
+      const total = Number(document.getElementById('totalVoters').value);
+      if (!total) return alert('전체 유권자 수를 입력하세요!');
+      await setDoc(doc(db, 'elections/2025/meta'), { totalVoters: total }, { merge: true });
+      document.getElementById('turnoutStatus').textContent = `✅ 전체 유권자 수 ${total}명 저장됨.`;
+    };
+
+    async function loadTurnout() {
+      const metaDoc = await getDoc(doc(db, 'elections/2025/meta'));
+      if (metaDoc.exists()) {
+        document.getElementById('totalVoters').value = metaDoc.data().totalVoters || '';
+      }
+    }
+
+    loadTurnout();
     renderCandidates();
   </script>
 </body>
