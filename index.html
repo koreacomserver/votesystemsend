@@ -21,7 +21,8 @@
     .add-form{ display:flex; gap:0.5rem; margin-top:1rem;}
     .percent{ color:#7fd4ff; font-size:0.9rem; margin-left:6px;}
     .badge{ background:#ffb347; color:#000; font-weight:bold; padding:3px 8px; border-radius:6px; position:absolute; top:-10px; right:-10px; font-size:0.8rem; box-shadow:0 0 5px rgba(0,0,0,0.4);}
-    .turnout-box{ margin-top:2rem; padding:1rem; background:#20283a; border-radius:8px;}
+    /* ① 전역 turnout-box 삭제됨. 이 스타일은 직책별 박스에 적용됨 */
+    .turnout-box{ margin-top:2rem; padding:1rem; background:#20283a; border-radius:8px; display:flex; gap:10px; align-items:center;} 
     /* 전체화면 오버레이 */
     #winnerOverlay {
       position: fixed;
@@ -47,13 +48,7 @@
   <main>
     <section id="positions"></section>
 
-    <div class="turnout-box">
-      <h2>전체 투표율 설정</h2>
-      <label>전체 유권자 수: </label>
-      <input type="number" id="totalVoters" placeholder="예: 450" />
-      <button onclick="updateTotalVoters()">저장</button>
-      <div id="turnoutStatus"></div>
-    </div>
+    <!-- ① 기존 "전체 투표율 설정" 박스 삭제됨 -->
 
     <div class="status" id="status">Firestore 연결 중...</div>
   </main>
@@ -90,6 +85,7 @@
 
     positions.forEach(pos => {
       const section = document.createElement("section");
+      // ② 각 직책 섹션 아래에 "유권자 수 설정 박스" 추가
       section.innerHTML = `
         <h2>
           ${pos.label}
@@ -100,6 +96,12 @@
           <input type="text" id="name-${pos.key}" placeholder="후보 이름" />
           <input type="number" id="votes-${pos.key}" placeholder="득표수" />
           <button onclick="addCandidate('${pos.key}')">추가</button>
+        </div>
+        <div class="turnout-box">
+          <label>유권자 수: </label>
+          <input type="number" id="voters-${pos.key}" placeholder="예: 300" />
+          <button onclick="updateVoters('${pos.key}')">저장</button>
+          <div id="turnout-${pos.key}"></div>
         </div>
       `;
       container.appendChild(section);
@@ -116,6 +118,10 @@
         let totalVotes = 0;
         const candidates = [];
         snap.forEach(docSnap => {
+          // 🔥 수정된 부분: 문서 ID가 'meta'인 경우(유권자 수 정보) 후보자 목록에서 제외합니다.
+          if (docSnap.id === 'meta') { 
+            return; 
+          }
           const data = { id: docSnap.id, ...docSnap.data() };
           candidates.push(data);
           totalVotes += Number(data.votes || 0);
@@ -125,7 +131,9 @@
         candidates.sort((a,b)=>b.votes - a.votes);
 
         candidates.forEach((c, i) => {
-          const percent = totalVotes ? ((c.votes / totalVotes) * 100).toFixed(1) : 0;
+          // c.votes가 undefined일 경우 0으로 처리 (meta 문서를 걸러냈으므로 불필요하지만 안전장치)
+          const votes = Number(c.votes || 0);
+          const percent = totalVotes ? ((votes / totalVotes) * 100).toFixed(1) : 0;
           const div = document.createElement('div');
           div.className = 'candidate-item';
           div.innerHTML = `
@@ -146,11 +154,11 @@
       document.getElementById("status").textContent = "✅ Firestore 연결됨 (실시간 반영 중)";
     }
 
-    // 후보 추가/수정/삭제는 기존과 동일
+    // 후보 추가/수정/삭제 (기존과 동일)
     window.addCandidate = async function(position) {
       const name = document.getElementById(`name-${position}`).value.trim();
       const votes = Number(document.getElementById(`votes-${position}`).value) || 0;
-      if (!name) return alert("이름을 입력하세요!");
+      if (!name) return console.error("이름을 입력하세요!"); // alert 대신 console.error 사용
       await addDoc(collection(db, `elections/2025/${position}`), { name, votes });
       document.getElementById(`name-${position}`).value = '';
       document.getElementById(`votes-${position}`).value = '';
@@ -164,34 +172,47 @@
     };
 
     window.deleteCandidate = async function(position, id) {
-      if (!confirm("정말 이 후보를 삭제할까요?")) return;
+      // 🔥 수정된 부분: window.confirm()을 제거하고 바로 삭제합니다.
+      console.log(`🗑️ Deleting: elections/2025/${position}/${id}`);
       await deleteDoc(doc(db, `elections/2025/${position}/${id}`));
       document.getElementById('status').textContent = `🗑️ ${position} 후보 삭제 완료!`;
     };
 
-    window.updateTotalVoters = async function() {
-      const total = Number(document.getElementById('totalVoters').value);
-      if (!total) return alert('전체 유권자 수를 입력하세요!');
-      await setDoc(doc(db, 'elections/2025/meta'), { totalVoters: total }, { merge: true });
-      document.getElementById('turnoutStatus').textContent = `✅ 전체 유권자 수 ${total}명 저장됨.`;
+    // 직책별 유권자 수 저장
+    window.updateVoters = async function(position) {
+      const total = Number(document.getElementById(`voters-${position}`).value);
+      if (!total) return console.error('유권자 수를 입력하세요!');
+      // 저장 경로: elections/2025/{position}/meta
+      await setDoc(doc(db, `elections/2025/${position}/meta`), { totalVoters: total }, { merge: true });
+      document.getElementById(`turnout-${position}`).textContent = `✅ ${total}명 저장됨.`;
     };
 
-    async function loadTurnout() {
-      const metaDoc = await getDoc(doc(db, 'elections/2025/meta'));
-      if (metaDoc.exists()) {
-        document.getElementById('totalVoters').value = metaDoc.data().totalVoters || '';
+    // 직책별 유권자 수 불러오기
+    async function loadVoters() {
+      for (const pos of positions) {
+        // 불러오기 경로: elections/2025/{position}/meta
+        const metaDoc = await getDoc(doc(db, `elections/2025/${pos.key}/meta`));
+        if (metaDoc.exists()) {
+          document.getElementById(`voters-${pos.key}`).value = metaDoc.data().totalVoters || '';
+          document.getElementById(`turnout-${pos.key}`).textContent = `현재: ${metaDoc.data().totalVoters || 0}명`;
+        }
       }
     }
-    loadTurnout();
-    renderCandidates();
 
-    // 🏆 당선 발표 전체화면 표시
+    loadVoters();
+    renderCandidates(); 
+
+    // 🏆 당선 발표 전체화면 표시 (기존과 동일)
     window.showWinner = async function(position) {
       const snap = await getDocs(collection(db, `elections/2025/${position}`));
       const candidates = [];
       let totalVotes = 0;
-      snap.forEach(d => { candidates.push(d.data()); totalVotes += d.data().votes; });
-      if (!candidates.length) return alert("후보가 없습니다!");
+      snap.forEach(d => {
+        // 'meta' 문서 필터링 (다시 한 번)
+        if (d.id === 'meta') return;
+        candidates.push(d.data()); totalVotes += d.data().votes;
+      });
+      if (!candidates.length) return console.error("후보가 없습니다!");
 
       candidates.sort((a,b)=>b.votes - a.votes);
       const winner = candidates[0];
